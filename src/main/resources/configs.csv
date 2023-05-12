@@ -1,0 +1,3 @@
+port:9999
+thread quantity:64
+memory for request reading:1024
