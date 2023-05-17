@@ -4,7 +4,7 @@ import java.util.Arrays;
 
 public enum Method {
     GET("GET"),
-    PUT("PUT");
+    POST("POST");
 
     private String method;
 

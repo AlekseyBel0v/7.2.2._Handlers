@@ -16,8 +16,12 @@ public class Server {
     final private HandlerBase handlerBase = new HandlerBase();
     private int port;
     private int treadQuantity;
-    private int memoryForRequestReading;
-
+    //private int memoryForRequestReading;
+    public Server(int port, int treadQuantity) {
+        this.port = port;
+        this.treadQuantity = treadQuantity;
+        //this.memoryForRequestReading = memoryForRequestReading;
+    }
     {
         validPaths.add("/index.html");
         validPaths.add("/spring.svg");
@@ -27,23 +31,10 @@ public class Server {
         validPaths.add("/app.js");
         validPaths.add("/links.html");
         validPaths.add("/forms.html");
-        validPaths.add("/classic.html");
         validPaths.add("/events.html");
         validPaths.add("/events.js");
-
     }
 
-    public Server(int port, int treadQuantity, int memoryForRequestReading) {
-        this.port = port;
-        this.treadQuantity = treadQuantity;
-        this.memoryForRequestReading = memoryForRequestReading;
-    }
-
-    /*
-    1. Запрос (без Query String) уходит на сервер c браузера на локалхост.
-    2. Сервер передает в новый поток в параметры метода handle(ServerSocket.accept()).
-    3. Тред обращается к мэпе хендлеров, находит нужный хендлер, вызывает у него метод хэндл. Метод хендл записывает ответ.
-     */
     void start() {
         System.out.println("server is running");
         ExecutorService threadPool = Executors.newFixedThreadPool(treadQuantity);
@@ -55,15 +46,15 @@ public class Server {
                         public void run() {
                             System.out.println("waiting for a connection");
                             try (final var socket = serverSocket.accept();
-                                 final var inputStream = socket.getInputStream();
-                                 final var in = new BufferedReader(new InputStreamReader(inputStream));
+                                 final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                                  final var out = new BufferedOutputStream(socket.getOutputStream())) {
                                 System.out.println("new connection");
-
+                                //in.mark(4000); - для информации
                                 // must be in form GET /path HTTP/1.1
                                 final var requestLine = in.readLine();
                                 final var parts = requestLine.split(" ");
 
+                                // проверка реквест лайн
                                 if (parts.length != 3) {
                                     out.write((
                                             "HTTP/1.1 400 Bad Request\r\n" +
@@ -74,33 +65,37 @@ public class Server {
                                     out.flush();
                                     return;
                                 }
-                                System.out.println("парсинг заголовков");
+
+                                // парсинг заголовков;
                                 String header = in.readLine();
                                 var headers = new HashMap<String, String>();
                                 while (!header.equals("")) {    //readline("\r\n") возвращает ""
-                                    headers.put(header.split(" ")[0], header.split(": ")[1]);
+                                    headers.put(header.split(": ")[0], header.split(": ")[1]);
                                     header = in.readLine();
                                 }
-                                System.out.println(headers);
 
+                                // парсинг тела
                                 byte[] body;
                                 if (headers.containsKey("Content-Length")) {
-                                    inputStream.reset();
-                                    var buffer = new String(inputStream.readAllBytes());
-                                    var startPositionOfBody = buffer.indexOf("\r\n\r\n") + 4;
-                                    body = Arrays.copyOfRange(buffer.getBytes(), startPositionOfBody, buffer.length());
+                                    var buffer = new char[Integer.parseInt(headers.get("Content-Length"))];
+                                    in.read(buffer);
+                                    //in.reset(); - метод для перезагрузки потока данных на позцию отметки (mark())
+                                    body = new String(buffer).replaceAll(String.valueOf('\u0000'), "").getBytes();
                                 } else body = new byte[0];
 
+                                // Создание объекта Реквест
                                 var request = new Request(parts, headers, body);
+                                System.out.println("Принят запрос:\n" + request);
 
-                                // check handlers for the request and handle if exists
+                                // handler checking for the request and handle if exists
                                 final var handler = handlerBase.getHandlerIfExists(request);
                                 if (handler != null) {
                                     handler.handle(request, out);
                                     return;
                                 }
 
-                                final var path = parts[1];
+                                // проверка существования ресурса
+                                final var path = request.getPath();
                                 if (!validPaths.contains(path)) {
                                     out.write((
                                             "HTTP/1.1 404 Not Found\r\n" +
@@ -113,30 +108,8 @@ public class Server {
                                 }
 
                                 final var filePath = Path.of(".", "public", path);
-                                System.out.println(filePath);
-                                // определение тип файла в соотвтествии с реестром IANA
+                                // определение типа файла в соотвтествии с реестром IANA
                                 final var mimeType = Files.probeContentType(filePath);
-
-                                // special case for classic
-                                if (path.equals("/classic.html")) {
-                                    final var template = Files.readString(filePath);
-                                    final var content = template.replace(
-                                            "{time}",
-                                            LocalDateTime.now().toString()
-                                    ).getBytes();
-                                    out.write((
-                                            "HTTP/1.1 200 OK\r\n" +
-                                            "Content-Type: " + mimeType + "\r\n" +
-                                            "Content-Length: " + content.length + "\r\n" +
-                                            "Connection: close\r\n" +
-                                            "\r\n"
-                                    ).getBytes());
-                                    out.write(content);
-                                    out.flush();
-                                    return;
-                                }
-
-
                                 final var length = Files.size(filePath);
                                 out.write((
                                         "HTTP/1.1 200 OK\r\n" +
